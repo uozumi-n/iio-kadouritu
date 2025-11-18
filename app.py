@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import io
 
 # ページ設定
@@ -98,6 +98,77 @@ if uploaded_file is not None:
             horizontal=True
         )
 
+        # 時間帯指定
+        st.subheader("⏰ 集計時間帯の指定（オプション）")
+        use_time_filter = st.checkbox(
+            "時間帯を指定する（例：10時〜19時の稼働率を計算する場合）",
+            value=False
+        )
+
+        time_start = None
+        time_end = None
+        operating_hours = None
+
+        if use_time_filter:
+            col_time1, col_time2 = st.columns(2)
+            with col_time1:
+                time_start = st.time_input(
+                    "開始時刻",
+                    value=time(10, 0),
+                    help="集計対象とする開始時刻"
+                )
+            with col_time2:
+                time_end = st.time_input(
+                    "終了時刻",
+                    value=time(19, 0),
+                    help="集計対象とする終了時刻"
+                )
+
+            if time_start and time_end:
+                # 営業時間数を計算
+                start_minutes = time_start.hour * 60 + time_start.minute
+                end_minutes = time_end.hour * 60 + time_end.minute
+                operating_hours = (end_minutes - start_minutes) / 60
+
+                if operating_hours <= 0:
+                    st.error("⚠️ 終了時刻は開始時刻より後に設定してください")
+                else:
+                    st.info(f"📊 指定時間帯: {time_start.strftime('%H:%M')}〜{time_end.strftime('%H:%M')} （{operating_hours:.1f}時間）")
+
+        # 店舗別リソース数設定
+        st.subheader("🔧 店舗別リソース数設定（稼働率計算用・オプション）")
+        use_utilization = st.checkbox(
+            "リソース数を入力して稼働率を計算する",
+            value=False,
+            help="各店舗のリソース数（会議室数など）を入力すると稼働率が計算されます"
+        )
+
+        store_resources = {}
+        if use_utilization:
+            st.markdown("各店舗のリソース数を入力してください：")
+
+            # 選択された店舗ごとにリソース数を入力
+            cols_per_row = 3
+            store_cols = st.columns(cols_per_row)
+
+            for idx, store in enumerate(selected_stores):
+                col_idx = idx % cols_per_row
+                with store_cols[col_idx]:
+                    resource_count = st.number_input(
+                        f"{store}",
+                        min_value=1,
+                        max_value=100,
+                        value=1,
+                        step=1,
+                        key=f"resource_{store}"
+                    )
+                    store_resources[store] = resource_count
+
+            if use_time_filter and operating_hours and operating_hours > 0:
+                st.info(f"💡 稼働率 = 実際の利用時間 ÷ (リソース数 × {operating_hours:.1f}時間 × 期間の日数) × 100%")
+            else:
+                st.info("💡 稼働率 = 実際の利用時間 ÷ (リソース数 × 24時間 × 期間の日数) × 100%")
+
         st.markdown("---")
 
         # 集計実行ボタン
@@ -106,6 +177,8 @@ if uploaded_file is not None:
                 st.error("⚠️ 店舗を選択してください")
             elif start_date > end_date:
                 st.error("⚠️ 期間を正しく設定してください")
+            elif use_time_filter and operating_hours and operating_hours <= 0:
+                st.error("⚠️ 時間帯を正しく設定してください")
             else:
                 # データフィルタリング
                 filtered_df = df[
@@ -117,6 +190,27 @@ if uploaded_file is not None:
                 if len(filtered_df) == 0:
                     st.warning("⚠️ 指定した条件に該当するデータがありません")
                 else:
+                    # 時間帯フィルタリング
+                    if use_time_filter and time_start and time_end:
+                        # 開始時刻と終了時刻が指定時間帯内にあるかをチェック
+                        filtered_df['開始時刻'] = filtered_df['開始日時'].dt.time
+                        filtered_df['終了時刻'] = filtered_df['終了日時'].dt.time
+
+                        # 時間帯内のデータのみを抽出
+                        # 開始時刻が指定範囲内、または終了時刻が指定範囲内のデータを含む
+                        mask = (
+                            (filtered_df['開始時刻'] >= time_start) &
+                            (filtered_df['開始時刻'] < time_end)
+                        ) | (
+                            (filtered_df['終了時刻'] > time_start) &
+                            (filtered_df['終了時刻'] <= time_end)
+                        )
+                        filtered_df = filtered_df[mask].copy()
+
+                        if len(filtered_df) == 0:
+                            st.warning(f"⚠️ 指定した時間帯（{time_start.strftime('%H:%M')}〜{time_end.strftime('%H:%M')}）に該当するデータがありません")
+                            st.stop()
+
                     # 利用時間を計算（時間単位）
                     filtered_df['利用時間'] = (
                         filtered_df['終了日時'] - filtered_df['開始日時']
@@ -135,15 +229,67 @@ if uploaded_file is not None:
                     # 集計
                     result = unique_df.groupby(['期間', '店名']).agg(
                         利用件数合計=('Summary', 'count'),
-                        合計時間=('利用時間', 'sum')
+                        合計時間_時間=('利用時間', 'sum')
                     ).reset_index()
 
+                    # 列名を変更（時間単位を明確に）
+                    result.rename(columns={'合計時間_時間': '合計時間（時間）'}, inplace=True)
+
                     # 合計時間を小数点第1位まで丸める
-                    result['合計時間'] = result['合計時間'].round(1)
+                    result['合計時間（時間）'] = result['合計時間（時間）'].round(1)
+
+                    # 稼働率を計算
+                    if use_utilization and store_resources:
+                        # 期間の日数を計算
+                        if aggregation_unit == '月次':
+                            # 月次の場合、各月の日数を計算
+                            def get_days_in_period(period_str):
+                                year, month = period_str.split('-')
+                                year, month = int(year), int(month)
+                                # 翌月の1日の前日 = その月の最終日
+                                if month == 12:
+                                    next_month = datetime(year + 1, 1, 1)
+                                else:
+                                    next_month = datetime(year, month + 1, 1)
+                                last_day = next_month - timedelta(days=1)
+                                return last_day.day
+                        else:
+                            # 日別の場合は1日
+                            def get_days_in_period(period_str):
+                                return 1
+
+                        # 稼働率列を追加
+                        result['稼働率（%）'] = 0.0
+
+                        for idx, row in result.iterrows():
+                            store = row['店名']
+                            period = row['期間']
+                            actual_hours = row['合計時間（時間）']
+
+                            if store in store_resources:
+                                resource_count = store_resources[store]
+                                days_in_period = get_days_in_period(period)
+
+                                # 分母を計算
+                                if use_time_filter and operating_hours and operating_hours > 0:
+                                    # 時間帯指定がある場合
+                                    total_capacity = resource_count * operating_hours * days_in_period
+                                else:
+                                    # 時間帯指定がない場合（24時間）
+                                    total_capacity = resource_count * 24 * days_in_period
+
+                                # 稼働率を計算
+                                if total_capacity > 0:
+                                    utilization_rate = (actual_hours / total_capacity) * 100
+                                    result.at[idx, '稼働率（%）'] = round(utilization_rate, 1)
 
                     # 結果を表示
                     st.header("3️⃣ 集計結果")
                     st.success(f"✅ 集計完了！（{len(result)}件）")
+
+                    # 時間帯指定の情報を表示
+                    if use_time_filter and time_start and time_end:
+                        st.info(f"⏰ 集計時間帯: {time_start.strftime('%H:%M')}〜{time_end.strftime('%H:%M')}")
 
                     # 結果テーブル表示
                     st.dataframe(
@@ -153,13 +299,22 @@ if uploaded_file is not None:
                     )
 
                     # 統計情報
-                    col1, col2, col3 = st.columns(3)
+                    if use_utilization and '稼働率（%）' in result.columns:
+                        col1, col2, col3, col4 = st.columns(4)
+                    else:
+                        col1, col2, col3 = st.columns(3)
+
                     with col1:
                         st.metric("総利用件数", f"{result['利用件数合計'].sum():,}件")
                     with col2:
-                        st.metric("総利用時間", f"{result['合計時間'].sum():.1f}時間")
+                        st.metric("総利用時間", f"{result['合計時間（時間）'].sum():.1f}時間")
                     with col3:
                         st.metric("対象店舗数", f"{len(selected_stores)}店舗")
+
+                    if use_utilization and '稼働率（%）' in result.columns:
+                        with col4:
+                            avg_utilization = result['稼働率（%）'].mean()
+                            st.metric("平均稼働率", f"{avg_utilization:.1f}%")
 
                     # CSVダウンロードボタン
                     st.markdown("---")
@@ -207,17 +362,31 @@ else:
         - カテゴリ
         - 人数制限
 
-        ### 機能
+        ### 主な機能
         1. **期間選択**: カレンダーから集計期間を指定
         2. **店舗選択**: 複数店舗を選択可能
         3. **集計単位**: 月次または日別で集計
-        4. **重複除外**: Summary列の重複を除外してカウント
-        5. **CSVダウンロード**: 集計結果をCSVファイルでダウンロード
+        4. **時間帯指定（オプション）**: 営業時間帯を指定して集計（例：10時〜19時）
+        5. **稼働率計算（オプション）**: 店舗別リソース数を入力して稼働率を算出
+        6. **重複除外**: Summary列の重複を除外してカウント
+        7. **CSVダウンロード**: 集計結果をCSVファイルでダウンロード
+
+        ### 稼働率について
+        稼働率は以下の計算式で算出されます：
+
+        **稼働率 = 実際の利用時間 ÷ (リソース数 × 営業時間 × 期間の日数) × 100%**
+
+        - **時間帯指定なし**: 24時間で計算
+        - **時間帯指定あり**: 指定した時間帯（例：10時〜19時 = 9時間）で計算
+
+        例）月次集計、東京店、リソース数3、営業時間9時間、30日間の場合：
+        - 分母 = 3 × 9 × 30 = 810時間
+        - 実際の利用時間が100時間なら、稼働率 = 100 ÷ 810 × 100 = 12.3%
         """)
 
 # フッター
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v1.0</div>",
+    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v2.0</div>",
     unsafe_allow_html=True
 )
