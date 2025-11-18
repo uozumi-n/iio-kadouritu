@@ -190,20 +190,17 @@ if uploaded_file is not None:
                 if len(filtered_df) == 0:
                     st.warning("⚠️ 指定した条件に該当するデータがありません")
                 else:
-                    # 時間帯フィルタリング
+                    # 時間帯フィルタリングと利用時間計算
                     if use_time_filter and time_start and time_end:
-                        # 開始時刻と終了時刻が指定時間帯内にあるかをチェック
+                        # 開始時刻と終了時刻を抽出
                         filtered_df['開始時刻'] = filtered_df['開始日時'].dt.time
                         filtered_df['終了時刻'] = filtered_df['終了日時'].dt.time
 
-                        # 時間帯内のデータのみを抽出
-                        # 開始時刻が指定範囲内、または終了時刻が指定範囲内のデータを含む
+                        # 時間帯と重複する予約のみを抽出
+                        # 予約が時間帯と少しでも重なっている場合を含む
                         mask = (
-                            (filtered_df['開始時刻'] >= time_start) &
-                            (filtered_df['開始時刻'] < time_end)
-                        ) | (
-                            (filtered_df['終了時刻'] > time_start) &
-                            (filtered_df['終了時刻'] <= time_end)
+                            (filtered_df['開始時刻'] < time_end) &
+                            (filtered_df['終了時刻'] > time_start)
                         )
                         filtered_df = filtered_df[mask].copy()
 
@@ -211,10 +208,53 @@ if uploaded_file is not None:
                             st.warning(f"⚠️ 指定した時間帯（{time_start.strftime('%H:%M')}〜{time_end.strftime('%H:%M')}）に該当するデータがありません")
                             st.stop()
 
-                    # 利用時間を計算（時間単位）
-                    filtered_df['利用時間'] = (
-                        filtered_df['終了日時'] - filtered_df['開始日時']
-                    ).dt.total_seconds() / 3600
+                        # 指定時間帯との重複部分のみを計算
+                        def calculate_overlap_hours(row):
+                            # 予約の開始・終了時刻をdatetimeに変換
+                            reservation_start = row['開始日時']
+                            reservation_end = row['終了日時']
+
+                            # 指定時間帯の開始・終了をdatetimeに変換（同じ日付で）
+                            date = reservation_start.date()
+                            filter_start = datetime.combine(date, time_start)
+                            filter_end = datetime.combine(date, time_end)
+
+                            # 予約が日をまたぐ場合の処理
+                            if reservation_end.date() != date:
+                                # 終了日の時間帯も考慮
+                                filter_end_next = datetime.combine(reservation_end.date(), time_end)
+
+                                # 1日目の重複計算
+                                actual_start = max(reservation_start, filter_start)
+                                actual_end = min(reservation_end, datetime.combine(date, time(23, 59, 59)))
+                                hours_day1 = max(0, (actual_end - actual_start).total_seconds() / 3600)
+
+                                # 2日目の重複計算
+                                filter_start_next = datetime.combine(reservation_end.date(), time_start)
+                                actual_start_day2 = max(reservation_start, filter_start_next)
+                                actual_end_day2 = min(reservation_end, filter_end_next)
+                                hours_day2 = max(0, (actual_end_day2 - actual_start_day2).total_seconds() / 3600)
+
+                                return hours_day1 + hours_day2
+                            else:
+                                # 同じ日の場合：重複部分を計算
+                                actual_start = max(reservation_start, filter_start)
+                                actual_end = min(reservation_end, filter_end)
+
+                                # 重複がある場合のみ時間を計算
+                                if actual_start < actual_end:
+                                    return (actual_end - actual_start).total_seconds() / 3600
+                                else:
+                                    return 0
+
+                        # 各行に対して重複時間を計算
+                        filtered_df['利用時間'] = filtered_df.apply(calculate_overlap_hours, axis=1)
+
+                    else:
+                        # 時間帯指定なしの場合：全時間を計算
+                        filtered_df['利用時間'] = (
+                            filtered_df['終了日時'] - filtered_df['開始日時']
+                        ).dt.total_seconds() / 3600
 
                     # 集計期間列を追加
                     if aggregation_unit == '月次':
@@ -346,6 +386,13 @@ else:
     # 使い方の説明
     with st.expander("📖 使い方"):
         st.markdown("""
+        ### 元データのダウンロード
+        集計に使用するCSVファイルは以下のリンクからダウンロードできます：
+
+        🔗 **[予約データダッシュボード](https://e-office.metabaseapp.com/public/dashboard/3c050fda-22f8-41cd-8744-928f27a4342b)**
+
+        ---
+
         ### CSVファイルの形式
         以下の列を含むCSVファイルをアップロードしてください：
 
@@ -367,6 +414,8 @@ else:
         2. **店舗選択**: 複数店舗を選択可能
         3. **集計単位**: 月次または日別で集計
         4. **時間帯指定（オプション）**: 営業時間帯を指定して集計（例：10時〜19時）
+           - 予約と時間帯の重複部分のみを集計します
+           - 例：予約が9時〜11時、時間帯が10時〜19時の場合 → 10時〜11時の1時間を集計
         5. **稼働率計算（オプション）**: 店舗別リソース数を入力して稼働率を算出
         6. **重複除外**: Summary列の重複を除外してカウント
         7. **CSVダウンロード**: 集計結果をCSVファイルでダウンロード
@@ -387,6 +436,6 @@ else:
 # フッター
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v2.0</div>",
+    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v2.1</div>",
     unsafe_allow_html=True
 )
