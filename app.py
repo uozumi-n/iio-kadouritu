@@ -98,6 +98,51 @@ if uploaded_file is not None:
             horizontal=True
         )
 
+        # 人数制限フィルタリング
+        st.subheader("👥 人数制限フィルタリング（オプション）")
+        use_capacity_filter = st.checkbox(
+            "人数制限で絞り込む",
+            value=False,
+            help="人数制限の条件に合うデータのみを集計対象にします"
+        )
+
+        capacity_min = None
+        capacity_max = None
+
+        if use_capacity_filter:
+            # データから人数制限の範囲を取得
+            all_capacities = df['人数制限'].dropna().unique()
+            if len(all_capacities) > 0:
+                min_cap = int(df['人数制限'].min())
+                max_cap = int(df['人数制限'].max())
+
+                col_cap1, col_cap2 = st.columns(2)
+                with col_cap1:
+                    capacity_min = st.number_input(
+                        "最小人数",
+                        min_value=min_cap,
+                        max_value=max_cap,
+                        value=min_cap,
+                        step=1,
+                        help="この人数以上の予約を集計対象にします"
+                    )
+                with col_cap2:
+                    capacity_max = st.number_input(
+                        "最大人数",
+                        min_value=min_cap,
+                        max_value=max_cap,
+                        value=max_cap,
+                        step=1,
+                        help="この人数以下の予約を集計対象にします"
+                    )
+
+                if capacity_min > capacity_max:
+                    st.error("⚠️ 最小人数は最大人数以下に設定してください")
+                else:
+                    st.info(f"👥 人数制限: {capacity_min}人〜{capacity_max}人の予約を集計")
+            else:
+                st.warning("⚠️ データに人数制限の情報が含まれていません")
+
         # 時間帯指定
         st.subheader("⏰ 集計時間帯の指定（オプション）")
         use_time_filter = st.checkbox(
@@ -179,6 +224,8 @@ if uploaded_file is not None:
                 st.error("⚠️ 期間を正しく設定してください")
             elif use_time_filter and operating_hours and operating_hours <= 0:
                 st.error("⚠️ 時間帯を正しく設定してください")
+            elif use_capacity_filter and capacity_min is not None and capacity_max is not None and capacity_min > capacity_max:
+                st.error("⚠️ 人数制限の範囲を正しく設定してください")
             else:
                 # データフィルタリング
                 filtered_df = df[
@@ -186,6 +233,13 @@ if uploaded_file is not None:
                     (df['開始日時'].dt.date <= end_date) &
                     (df['店名'].isin(selected_stores))
                 ].copy()
+
+                # 人数制限でフィルタリング
+                if use_capacity_filter and capacity_min is not None and capacity_max is not None:
+                    filtered_df = filtered_df[
+                        (filtered_df['人数制限'] >= capacity_min) &
+                        (filtered_df['人数制限'] <= capacity_max)
+                    ].copy()
 
                 if len(filtered_df) == 0:
                     st.warning("⚠️ 指定した条件に該当するデータがありません")
@@ -327,9 +381,15 @@ if uploaded_file is not None:
                     st.header("3️⃣ 集計結果")
                     st.success(f"✅ 集計完了！（{len(result)}件）")
 
-                    # 時間帯指定の情報を表示
+                    # フィルタ条件の情報を表示
+                    filter_info = []
                     if use_time_filter and time_start and time_end:
-                        st.info(f"⏰ 集計時間帯: {time_start.strftime('%H:%M')}〜{time_end.strftime('%H:%M')}")
+                        filter_info.append(f"⏰ 集計時間帯: {time_start.strftime('%H:%M')}〜{time_end.strftime('%H:%M')}")
+                    if use_capacity_filter and capacity_min is not None and capacity_max is not None:
+                        filter_info.append(f"👥 人数制限: {capacity_min}人〜{capacity_max}人")
+
+                    if filter_info:
+                        st.info(" / ".join(filter_info))
 
                     # 結果テーブル表示
                     st.dataframe(
@@ -386,13 +446,6 @@ else:
     # 使い方の説明
     with st.expander("📖 使い方"):
         st.markdown("""
-        ### 元データのダウンロード
-        集計に使用するCSVファイルは以下のリンクからダウンロードできます：
-
-        🔗 **[予約データダッシュボード](https://e-office.metabaseapp.com/public/dashboard/3c050fda-22f8-41cd-8744-928f27a4342b)**
-
-        ---
-
         ### CSVファイルの形式
         以下の列を含むCSVファイルをアップロードしてください：
 
@@ -413,12 +466,14 @@ else:
         1. **期間選択**: カレンダーから集計期間を指定
         2. **店舗選択**: 複数店舗を選択可能
         3. **集計単位**: 月次または日別で集計
-        4. **時間帯指定（オプション）**: 営業時間帯を指定して集計（例：10時〜19時）
+        4. **人数制限フィルタリング（オプション）**: 人数制限で絞り込み
+           - 例：10人〜30人の会議室のみを集計対象にする
+        5. **時間帯指定（オプション）**: 営業時間帯を指定して集計（例：10時〜19時）
            - 予約と時間帯の重複部分のみを集計します
            - 例：予約が9時〜11時、時間帯が10時〜19時の場合 → 10時〜11時の1時間を集計
-        5. **稼働率計算（オプション）**: 店舗別リソース数を入力して稼働率を算出
-        6. **重複除外**: Summary列の重複を除外してカウント
-        7. **CSVダウンロード**: 集計結果をCSVファイルでダウンロード
+        6. **稼働率計算（オプション）**: 店舗別リソース数を入力して稼働率を算出
+        7. **重複除外**: Summary列の重複を除外してカウント
+        8. **CSVダウンロード**: 集計結果をCSVファイルでダウンロード
 
         ### 稼働率について
         稼働率は以下の計算式で算出されます：
@@ -436,6 +491,6 @@ else:
 # フッター
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v2.1</div>",
+    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v2.2</div>",
     unsafe_allow_html=True
 )
