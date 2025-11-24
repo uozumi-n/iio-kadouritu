@@ -48,6 +48,116 @@
 
 例: `2025-11-16, 23:15`
 
+## 🚀 Mac でのローカル実行方法（推奨）
+
+非エンジニアでも簡単に実行できるように手順を詳しく説明します。
+
+### 前提条件
+
+- Mac OS（すべてのMacユーザー対応）
+- インターネット接続
+
+### ステップ1: Pythonのインストール確認
+
+1. **ターミナル**を開く
+   - Spotlight検索（Command + Space）で「ターミナル」と入力
+   - またはアプリケーション → ユーティリティ → ターミナル
+
+2. 以下のコマンドを入力してEnter:
+   ```bash
+   python3 --version
+   ```
+
+3. バージョンが表示されればOK（例: `Python 3.9.6`）
+   - 表示されない場合は[Python公式サイト](https://www.python.org/downloads/)からインストール
+
+### ステップ2: アプリをダウンロード
+
+**方法A: ZIPファイルでダウンロード（簡単）**
+1. GitHubのこのリポジトリページにアクセス
+2. 緑色の「Code」ボタンをクリック
+3. 「Download ZIP」を選択
+4. ダウンロードしたZIPファイルをダブルクリックで解凍
+5. 解凍したフォルダを「書類」フォルダなど分かりやすい場所に移動
+
+**方法B: Git でクローン（推奨）**
+```bash
+cd ~/Documents
+git clone <repository-url>
+cd iio-kadouritu
+```
+
+### ステップ3: アプリを起動
+
+1. ターミナルでアプリのフォルダに移動:
+   ```bash
+   cd ~/Documents/iio-kadouritu
+   ```
+   ※ フォルダの場所が違う場合は適宜変更してください
+
+2. **初回のみ**: 依存パッケージをインストール:
+   ```bash
+   pip3 install -r requirements.txt
+   ```
+   ※ これは最初の1回だけ実行すればOKです
+
+3. アプリを起動:
+   ```bash
+   streamlit run app.py
+   ```
+
+4. 自動的にブラウザが開いてアプリが表示されます
+   - 開かない場合は、ターミナルに表示される `http://localhost:8501` をブラウザで開く
+
+### ステップ4: アプリを終了
+
+- ターミナルで `Control + C` を押す
+- ターミナルを閉じる
+
+### 🎯 次回以降の起動方法
+
+2回目以降は簡単です：
+
+1. ターミナルを開く
+2. 以下のコマンドを実行:
+   ```bash
+   cd ~/Documents/iio-kadouritu
+   streamlit run app.py
+   ```
+3. ブラウザでアプリが開きます
+
+### 💡 さらに簡単にする方法
+
+**ワンクリック起動スクリプト**を使うと、毎回コマンドを入力する必要がなくなります。
+
+1. プロジェクトフォルダ内の `start.command` ファイルをダブルクリック
+2. 自動的にアプリが起動します
+
+詳しくは `start.command` ファイルをご覧ください。
+
+### ⚠️ トラブルシューティング
+
+**「command not found」エラーが出る場合**
+```bash
+# pip3 の代わりに pip を試す
+pip install -r requirements.txt
+
+# streamlit が見つからない場合
+python3 -m streamlit run app.py
+```
+
+**ポートが使用中の場合**
+```bash
+# 別のポートで起動
+streamlit run app.py --server.port 8502
+```
+
+**古いバージョンを削除したい場合**
+```bash
+pip3 uninstall streamlit pandas
+pip3 install -r requirements.txt
+```
+
 ## 🚀 Streamlit Cloudへのデプロイ手順
 
 ### 前提条件
@@ -185,10 +295,19 @@ MIT License
 
 ---
 
-**Version**: 2.2
+**Version**: 2.3
 **Last Updated**: 2025-11-18
 
 ## 🆕 更新履歴
+
+### v2.3 (2025-11-18)
+- 📖 Mac向けローカル実行手順を詳細に追加
+  - 非エンジニア向けに分かりやすい手順を記載
+  - トラブルシューティングセクションを追加
+- 🚀 ワンクリック起動スクリプト（start.command）を追加
+  - ダブルクリックだけでアプリが起動
+  - 依存パッケージの自動インストール機能付き
+  - Pythonバージョンチェック機能付き
 
 ### v2.2 (2025-11-18)
 - 🔒 セキュリティ改善：元データのリンク先を削除

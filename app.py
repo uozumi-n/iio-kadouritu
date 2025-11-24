@@ -491,6 +491,6 @@ else:
 # フッター
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v2.2</div>",
+    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v2.3</div>",
     unsafe_allow_html=True
 )
