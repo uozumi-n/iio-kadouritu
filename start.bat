@@ -5,15 +5,24 @@ setlocal enabledelayedexpansion
 :: 店舗予約データ集計アプリ起動スクリプト (Windows用)
 :: このファイルをダブルクリックするだけでアプリが起動します
 
-cls
+:: エラー発生時にウィンドウが閉じないようにする
+set "SCRIPT_ERROR=0"
+
 echo ==========================================
 echo   店舗予約データ集計アプリ v3.0
 echo ==========================================
 echo.
 
 :: スクリプトのディレクトリに移動
-cd /d "%~dp0"
-
+set "SCRIPT_DIR=%~dp0"
+echo 📂 スクリプトの場所: %SCRIPT_DIR%
+cd /d "%SCRIPT_DIR%"
+if !errorlevel! neq 0 (
+    echo ❌ エラー: ディレクトリに移動できませんでした
+    echo    パス: %SCRIPT_DIR%
+    set "SCRIPT_ERROR=1"
+    goto :error_exit
+)
 echo 📂 現在のディレクトリ: %CD%
 echo.
 
@@ -64,8 +73,8 @@ echo インストール時は必ず「Add Python to PATH」にチェックを入
 echo.
 echo ※ 管理者権限で実行している場合は、通常モードで再実行してみてください
 echo.
-pause
-exit /b 1
+set "SCRIPT_ERROR=1"
+goto :error_exit
 
 :python_found
 
@@ -89,8 +98,8 @@ if !errorlevel! neq 0 (
         echo.
         echo ❌ エラー: インストールに失敗しました
         echo    エラーコード: !INSTALL_RESULT!
-        pause
-        exit /b 1
+        set "SCRIPT_ERROR=1"
+        goto :error_exit
     )
 ) else (
     echo ✅ 依存パッケージは既にインストールされています
@@ -118,4 +127,19 @@ echo.
 echo.
 echo 👋 アプリが終了しました
 echo.
+goto :end
+
+:error_exit
+echo.
+echo ==========================================
+echo   エラーが発生しました
+echo ==========================================
+echo.
+echo 上記のエラーメッセージを確認してください。
+echo.
+echo このウィンドウは自動的には閉じません。
+echo 内容を確認後、任意のキーを押して終了してください。
+echo.
+
+:end
 pause
