@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta, time
+from datetime import datetime, time, date as date_type
+import calendar
 import io
+import jpholiday
 
 # ページ設定
 st.set_page_config(
@@ -96,6 +98,14 @@ if uploaded_file is not None:
             "集計単位を選択",
             options=['月次', '日別'],
             horizontal=True
+        )
+
+        # 土日祝・平日分割
+        st.subheader("📅 土日祝日・平日 分割集計（オプション）")
+        use_day_type_split = st.checkbox(
+            "土日祝日と平日に分けて稼働率を出力する",
+            value=False,
+            help="集計結果を「平日」と「土日祝日」に分けて出力します。日本の祝日に対応しています。"
         )
 
         # 人数制限フィルタリング
@@ -316,12 +326,26 @@ if uploaded_file is not None:
                     else:  # 日別
                         filtered_df['期間'] = filtered_df['開始日時'].dt.strftime('%Y-%m-%d')
 
+                    # 曜日区分列を追加（土日祝日/平日分割時）
+                    if use_day_type_split:
+                        def classify_day_type(dt):
+                            d = dt.date() if hasattr(dt, 'date') else dt
+                            if d.weekday() >= 5 or jpholiday.is_holiday(d):
+                                return '土日祝日'
+                            return '平日'
+                        filtered_df['曜日区分'] = filtered_df['開始日時'].apply(classify_day_type)
+
                     # Summary重複を除外してグループ化
                     # 同じ期間、店名、Summaryの組み合わせで重複を除外
-                    unique_df = filtered_df.drop_duplicates(subset=['期間', '店名', 'Summary'])
+                    dedup_cols = ['期間', '店名', 'Summary']
+                    group_cols = ['期間', '店名']
+                    if use_day_type_split:
+                        dedup_cols = ['期間', '曜日区分', '店名', 'Summary']
+                        group_cols = ['期間', '曜日区分', '店名']
+                    unique_df = filtered_df.drop_duplicates(subset=dedup_cols)
 
                     # 集計
-                    result = unique_df.groupby(['期間', '店名']).agg(
+                    result = unique_df.groupby(group_cols).agg(
                         利用件数合計=('Summary', 'count'),
                         合計時間_時間=('利用時間', 'sum')
                     ).reset_index()
@@ -334,23 +358,28 @@ if uploaded_file is not None:
 
                     # 稼働率を計算
                     if use_utilization and store_resources:
-                        # 期間の日数を計算
-                        if aggregation_unit == '月次':
-                            # 月次の場合、各月の日数を計算
-                            def get_days_in_period(period_str):
-                                year, month = period_str.split('-')
-                                year, month = int(year), int(month)
-                                # 翌月の1日の前日 = その月の最終日
-                                if month == 12:
-                                    next_month = datetime(year + 1, 1, 1)
-                                else:
-                                    next_month = datetime(year, month + 1, 1)
-                                last_day = next_month - timedelta(days=1)
-                                return last_day.day
-                        else:
-                            # 日別の場合は1日
-                            def get_days_in_period(period_str):
+                        # 期間の日数を計算する関数
+                        def get_days_in_period(period_str, day_type=None):
+                            if aggregation_unit == '日別':
                                 return 1
+                            # 月次の場合
+                            year, month = period_str.split('-')
+                            year, month = int(year), int(month)
+                            total_days = calendar.monthrange(year, month)[1]
+
+                            if day_type is None:
+                                return total_days
+
+                            # 曜日区分ごとの日数をカウント
+                            count = 0
+                            for day in range(1, total_days + 1):
+                                d = date_type(year, month, day)
+                                is_holiday_or_weekend = d.weekday() >= 5 or jpholiday.is_holiday(d)
+                                if day_type == '土日祝日' and is_holiday_or_weekend:
+                                    count += 1
+                                elif day_type == '平日' and not is_holiday_or_weekend:
+                                    count += 1
+                            return count
 
                         # 稼働率列を追加
                         result['稼働率（%）'] = 0.0
@@ -362,14 +391,18 @@ if uploaded_file is not None:
 
                             if store in store_resources:
                                 resource_count = store_resources[store]
-                                days_in_period = get_days_in_period(period)
+
+                                # 曜日区分分割時は該当区分の日数のみカウント
+                                if use_day_type_split:
+                                    day_type = row['曜日区分']
+                                    days_in_period = get_days_in_period(period, day_type)
+                                else:
+                                    days_in_period = get_days_in_period(period)
 
                                 # 分母を計算
                                 if use_time_filter and operating_hours and operating_hours > 0:
-                                    # 時間帯指定がある場合
                                     total_capacity = resource_count * operating_hours * days_in_period
                                 else:
-                                    # 時間帯指定がない場合（24時間）
                                     total_capacity = resource_count * 24 * days_in_period
 
                                 # 稼働率を計算
@@ -383,6 +416,8 @@ if uploaded_file is not None:
 
                     # フィルタ条件の情報を表示
                     filter_info = []
+                    if use_day_type_split:
+                        filter_info.append("📅 土日祝日・平日 分割集計")
                     if use_time_filter and time_start and time_end:
                         filter_info.append(f"⏰ 集計時間帯: {time_start.strftime('%H:%M')}〜{time_end.strftime('%H:%M')}")
                     if use_capacity_filter and capacity_min is not None and capacity_max is not None:
@@ -466,14 +501,15 @@ else:
         1. **期間選択**: カレンダーから集計期間を指定
         2. **店舗選択**: 複数店舗を選択可能
         3. **集計単位**: 月次または日別で集計
-        4. **人数制限フィルタリング（オプション）**: 人数制限で絞り込み
+        4. **土日祝日・平日分割（オプション）**: 稼働率を平日と土日祝日に分けて出力（日本の祝日対応）
+        5. **人数制限フィルタリング（オプション）**: 人数制限で絞り込み
            - 例：10人〜30人の会議室のみを集計対象にする
-        5. **時間帯指定（オプション）**: 営業時間帯を指定して集計（例：10時〜19時）
+        6. **時間帯指定（オプション）**: 営業時間帯を指定して集計（例：10時〜19時）
            - 予約と時間帯の重複部分のみを集計します
            - 例：予約が9時〜11時、時間帯が10時〜19時の場合 → 10時〜11時の1時間を集計
-        6. **稼働率計算（オプション）**: 店舗別リソース数を入力して稼働率を算出
-        7. **重複除外**: Summary列の重複を除外してカウント
-        8. **CSVダウンロード**: 集計結果をCSVファイルでダウンロード
+        7. **稼働率計算（オプション）**: 店舗別リソース数を入力して稼働率を算出
+        8. **重複除外**: Summary列の重複を除外してカウント
+        9. **CSVダウンロード**: 集計結果をCSVファイルでダウンロード
 
         ### 稼働率について
         稼働率は以下の計算式で算出されます：
@@ -491,6 +527,6 @@ else:
 # フッター
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v3.0</div>",
+    "<div style='text-align: center; color: gray;'>店舗予約データ集計アプリ v4.0</div>",
     unsafe_allow_html=True
 )
